@@ -1,0 +1,12 @@
+# 25MHz clock pin
+NET "external_clk" LOC = "A8";
+
+# Evalboard buttons
+NET "BTN2" LOC = "A9";
+NET "BTN3" LOC = "A7";
+
+# Evalboard led's
+NET "LED1" LOC = "A10";
+NET "LED2" LOC = "B5";
+NET "LED3" LOC = "A5";
+NET "LED4" LOC = "A12";

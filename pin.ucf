@@ -1,0 +1,16 @@
+#NET "A" LOC = "N1";
+#NET "B" LOC = "M2";
+
+#NET "FWD" LOC = "K3";
+#NET "REV" LOC = "K2";
+#NET "MOV" LOC = "K1";
+
+NET "UART_TX" LOC = "P1";
+NET "IN0" LOC = "N1";
+NET "IN1" LOC = "M2";
+NET "IN2" LOC = "M3";
+NET "IN3" LOC = "K3";
+NET "IN4" LOC = "K2";
+NET "IN5" LOC = "K1";
+NET "IN6" LOC = "H1";
+NET "IN7" LOC = "J2";
