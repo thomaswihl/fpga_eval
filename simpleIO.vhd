@@ -139,10 +139,14 @@ architecture Behavioral of simpleIO is
     signal addra : STD_LOGIC_VECTOR(8 DOWNTO 0);
     signal la_data : STD_LOGIC_VECTOR(31 DOWNTO 0);
     signal addrb : STD_LOGIC_VECTOR(10 DOWNTO 0);
+    alias addrb_dw is addrb(10 downto 2);
     signal logic_data_available: std_logic;
     signal la_in: std_logic_vector(7 downto 0);
     type uart_state_t is (INIT, IDLE, WAIT_SEND, WAIT_READY);
     signal uart_state: uart_state_t := IDLE;
+    
+    type la_state_t is (TRIGGER, CAPTURE, OVERRUN, WAIT_TX);
+    signal la_state: la_state_t := TRIGGER;
 
 begin
 	dcm0: CLOCK_200M port map(CLKIN_IN => external_clk, CLKFX_OUT => clk_200M);
@@ -188,35 +192,74 @@ begin
     in_addr_changer: process(clk_200M)
     begin
         if falling_edge(clk_200M) then
-            if logic_data_available = '1' then
-                addra <= std_logic_vector(unsigned(addra) + 1);
+            if la_state = TRIGGER then
+                LED1 <= '0';
+                LED2 <= '0';
+                if logic_data_available = '1' and IN1 = '1' then
+                    addra <= std_logic_vector(unsigned(addra) + 1);
+                    la_state <= CAPTURE;
+                end if;
+            elsif la_state = CAPTURE then
+                LED1 <= '1';
+                LED2 <= '0';
+                if logic_data_available = '1' then
+                    addra <= std_logic_vector(unsigned(addra) + 1);
+                    if addra = addrb_dw then
+                        la_state <= OVERRUN;
+                    end if;
+                end if;
+            elsif la_state = OVERRUN then
+                LED1 <= '0';
+                LED2 <= '1';
+                if addra /= addrb_dw then
+                    la_state <= WAIT_TX;
+                end if;
+            elsif la_state = WAIT_TX then
+                LED1 <= '1';
+                LED2 <= '1';
+                if addra = addrb_dw then
+                    addra <= (others => '0');
+                    la_state <= TRIGGER;
+                end if;
             end if;
+        end if;
+    end process in_addr_changer;
+    
+    uart_tx_proc: process(clk_200M)
+    begin
+        if falling_edge(clk_200M) then
             if uart_state = INIT then
+                LED3 <= '0';
+                LED4 <= '0';
                 if uart_ready = '1' then
                     uart_state <= IDLE;
                 end if;
             elsif uart_state = IDLE then
-                if addra & "00" /= addrb then
+                LED3 <= '1';
+                LED4 <= '0';
+                if addra /= addrb_dw then
                     uart_start <= '1';
                     uart_state <= WAIT_SEND;
+                elsif la_state = WAIT_TX then
+                    addrb <= (others => '0');
                 end if;
             elsif uart_state = WAIT_SEND then
+                LED3 <= '0';
+                LED4 <= '1';
                 if uart_ready <= '0' then
                     uart_start <= '0';
                     uart_state <= WAIT_READY;
                 end if;
             elsif uart_state = WAIT_READY then
+                LED3 <= '1';
+                LED4 <= '1';
                 if uart_ready = '1' then
                     uart_state <= IDLE;
                     addrb <= std_logic_vector(unsigned(addrb) + 1);
                 end if;
             end if;
         end if;
-    end process in_addr_changer;
+    end process uart_tx_proc;
 	
-	LED1 <= clk_uart;
-	LED2 <= uart_ready;
-	LED3 <= uart_start;
-	LED4 <= clk_uart_slow;
 end Behavioral;
 

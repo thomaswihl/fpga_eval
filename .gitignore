@@ -1,3 +1,7 @@
+/flash.cfi
+/flash.mcs
+/flash.prm
+/flash.sig
 /CLOCK_200M.vhd
 /CLOCK_200M_arwz.ucf
 /CLOCK_UART.vhd
