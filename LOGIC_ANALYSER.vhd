@@ -43,20 +43,26 @@ end LOGIC_ANALYSER;
 architecture Behavioral of LOGIC_ANALYSER is
     signal counter: unsigned(PRECISION_BIT - 1 downto 0) := (others => '0');
     signal last_state: std_logic_vector(INPUT_COUNT - 1 downto 0) := (others => '0');
+    signal da: std_logic := '0';
 begin
     check_change: process(CLK)
     begin
-        if falling_edge(CLK) then
-            if last_state /= INPUT or counter = (counter'range => '1') then
-                OUTPUT <= INPUT & std_logic_vector(counter);
-                OUT_VALID <= '1';
-                last_state <= INPUT;
+        if rising_edge(CLK) then
+            if da = '1' then
                 counter <= (0 => '1', others => '0');
+            end if;
+            if last_state /= INPUT or counter = (counter'range => '1') then
+                last_state <= INPUT;
+                da <= '1';
             else
-                OUT_VALID <= '0';
+                if counter = "000000000000000000000010" then
+                    da <= '0';
+                end if;
                 counter <= counter + 1;
             end if;
         end if;
     end process check_change;
+    OUT_VALID <= da;
+    OUTPUT <= INPUT & "000000000000000000000001";
 end Behavioral;
 

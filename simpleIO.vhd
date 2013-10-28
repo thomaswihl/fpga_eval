@@ -55,7 +55,8 @@ architecture Behavioral of simpleIO is
 	COMPONENT CLOCK_200M is
 	PORT(
 		CLKIN_IN : IN std_logic;          
-		CLKFX_OUT : OUT std_logic
+		CLKFX_OUT : OUT std_logic;
+        CLKIN_IBUFG_OUT : OUT std_logic
 		);
 	END COMPONENT;
     
@@ -101,17 +102,6 @@ architecture Behavioral of simpleIO is
               READY: out std_logic );
     end COMPONENT;
 
-    COMPONENT LOGIC_ANALYSER is
-        generic( INPUT_COUNT : natural := 8;
-            PRECISION_BIT : natural := 24
-            );
-        port ( CLK : in std_logic;
-            INPUT : in std_logic_vector(INPUT_COUNT - 1 downto 0);
-            OUTPUT: out std_logic_vector(INPUT_COUNT + PRECISION_BIT - 1 downto 0);
-            OUT_VALID: out std_logic
-            );
-    end COMPONENT;
-
     constant enable: std_logic_vector(0 downto 0) := (others => '1');
 	constant divider_clk_1k: natural := 12500;
 	signal cnt_clk_1k: natural := 1;
@@ -130,7 +120,7 @@ architecture Behavioral of simpleIO is
     signal clk_uart_fast: std_logic;
     signal clk_uart_slow: std_logic;
     signal clk_uart: std_logic;
-	constant divider_clk_uart: natural := 21;-- * 921600; --25MHz * 24 / 31 = 19354838.7096774 / 921600 = 21.00134409
+	constant divider_clk_uart: natural := 31;-- * 921600; --25MHz * 24 / 21 = 28571429 / 921600 = 31.002
     constant baudrate: natural := 921600;-- / 921600;
     signal cnt_clk_uart: natural := 1;
     signal cnt_clk_uart_slow: natural := 1;
@@ -141,26 +131,29 @@ architecture Behavioral of simpleIO is
     signal addrb : STD_LOGIC_VECTOR(10 DOWNTO 0);
     alias addrb_dw is addrb(10 downto 2);
     signal logic_data_available: std_logic;
-    signal la_in: std_logic_vector(7 downto 0);
+    signal la_in0: std_logic_vector(7 downto 0);
+    signal la_in1: std_logic_vector(7 downto 0);
+    signal la_prev_in: std_logic_vector(7 downto 0);
     type uart_state_t is (INIT, IDLE, WAIT_SEND, WAIT_READY);
     signal uart_state: uart_state_t := IDLE;
     
     type la_state_t is (TRIGGER, CAPTURE, OVERRUN, WAIT_TX);
     signal la_state: la_state_t := TRIGGER;
+    signal internal_clk: std_logic;
+    signal la_count: std_logic_vector(23 downto 0) := (others => '0');
 
 begin
-	dcm0: CLOCK_200M port map(CLKIN_IN => external_clk, CLKFX_OUT => clk_200M);
-    dcm1: CLOCK_UART PORT MAP(CLKIN_IN => external_clk, CLKFX_OUT => clk_uart_fast);
+	dcm0: CLOCK_200M port map(CLKIN_IN => external_clk, CLKFX_OUT => clk_200M, CLKIN_IBUFG_OUT => internal_clk);
+    dcm1: CLOCK_UART PORT MAP(CLKIN_IN => internal_clk, CLKFX_OUT => clk_uart_fast);
     --btn2_debouncer: DEBOUNCE generic map(10) port map(INPUT => not BTN2, CLK => clk_1k, DEBOUNCED_OUPUT => btn2_debounced);
 	--btn3_debouncer: DEBOUNCE generic map(10) port map(INPUT => not BTN3, CLK => clk_1k, DEBOUNCED_OUPUT => btn3_debounced);
 	--decoder: QDEC generic map(4) port map(CLK => clk_1k, A => btn2_debounced, B => btn3_debounced, VALUE => decoder_value);
     memory : RAM port map (clka => clk_200M, wea => enable, addra => addra, dina => la_data, clkb => clk_200M, addrb => addrb, doutb => uart_data);
     uart: SERIAL port map ( CLK => clk_uart, DIN => uart_data, START => uart_start, DOUT => UART_TX, READY => uart_ready);
-    la0: LOGIC_ANALYSER generic map(8, 24) port map(CLK => clk_200M, INPUT => la_in, OUTPUT => la_data, OUT_VALID => logic_data_available);
-    la_in <= IN0 & IN1 & IN2 & IN3 & IN4 & IN5 & IN6 & IN7;
-	generate_clk_1k: process(external_clk)
+    --la0: LOGIC_ANALYSER generic map(8, 24) port map(CLK => clk_200M, INPUT => la_in, OUTPUT => la_data, OUT_VALID => logic_data_available);
+	generate_clk_1k: process(internal_clk)
 	begin
-		if rising_edge(external_clk) then
+		if rising_edge(internal_clk) then
 			if cnt_clk_1k = divider_clk_1k then
 				clk_1k <= not clk_1k;
 				cnt_clk_1k <= 1;
@@ -192,70 +185,83 @@ begin
     in_addr_changer: process(clk_200M)
     begin
         if falling_edge(clk_200M) then
+            la_in1 <= la_in0;
+            la_in0 <= IN0 & IN1 & IN2 & IN3 & IN4 & IN5 & IN6 & IN7;
             if la_state = TRIGGER then
                 LED1 <= '0';
                 LED2 <= '0';
-                if logic_data_available = '1' and IN1 = '1' then
-                    addra <= std_logic_vector(unsigned(addra) + 1);
+                addra <= std_logic_vector(unsigned(addra) + 1);
+                la_data <= la_in0 & (la_count'range => '0');
+                if la_in0(7) = '1' then
+                    la_data <= la_in0 & (la_count'range => '0');
+                    la_count <= (la_count'range => '0');
                     la_state <= CAPTURE;
+                    addra <= (addra'range => '0');
                 end if;
             elsif la_state = CAPTURE then
                 LED1 <= '1';
                 LED2 <= '0';
-                if logic_data_available = '1' then
-                    addra <= std_logic_vector(unsigned(addra) + 1);
-                    if addra = addrb_dw then
+                la_count <= std_logic_vector(unsigned(la_count) + 1);
+                if la_count = (la_count'range => '1') then
+                    la_state <= OVERRUN;
+                elsif la_in0 /= la_in1 then
+                    if addra = (addra'range => '1') then
                         la_state <= OVERRUN;
+                    else
+                        la_data <= la_in0 & la_count;
+                        addra <= std_logic_vector(unsigned(addra) + 1);
+                        la_count <= (la_count'range => '0');
                     end if;
                 end if;
             elsif la_state = OVERRUN then
                 LED1 <= '0';
                 LED2 <= '1';
-                if addra /= addrb_dw then
+                if addrb_dw /= (addrb_dw'range => '0') then
                     la_state <= WAIT_TX;
+                    addra <= (others => '0');
                 end if;
             elsif la_state = WAIT_TX then
                 LED1 <= '1';
                 LED2 <= '1';
                 if addra = addrb_dw then
-                    addra <= (others => '0');
+                    la_count <= (la_count'range => '0');
                     la_state <= TRIGGER;
                 end if;
             end if;
         end if;
     end process in_addr_changer;
     
-    uart_tx_proc: process(clk_200M)
+    uart_tx_proc: process(clk_uart)
     begin
-        if falling_edge(clk_200M) then
-            if uart_state = INIT then
-                LED3 <= '0';
-                LED4 <= '0';
-                if uart_ready = '1' then
-                    uart_state <= IDLE;
-                end if;
-            elsif uart_state = IDLE then
-                LED3 <= '1';
-                LED4 <= '0';
-                if addra /= addrb_dw then
-                    uart_start <= '1';
-                    uart_state <= WAIT_SEND;
-                elsif la_state = WAIT_TX then
-                    addrb <= (others => '0');
-                end if;
-            elsif uart_state = WAIT_SEND then
-                LED3 <= '0';
-                LED4 <= '1';
-                if uart_ready <= '0' then
-                    uart_start <= '0';
-                    uart_state <= WAIT_READY;
-                end if;
-            elsif uart_state = WAIT_READY then
-                LED3 <= '1';
-                LED4 <= '1';
-                if uart_ready = '1' then
-                    uart_state <= IDLE;
-                    addrb <= std_logic_vector(unsigned(addrb) + 1);
+        if rising_edge(clk_uart) then
+            if la_state /= TRIGGER then
+                if uart_state = INIT then
+                    LED3 <= '0';
+                    LED4 <= '0';
+                    if uart_ready = '1' then
+                        uart_state <= IDLE;
+                    end if;
+                elsif uart_state = IDLE then
+                    LED3 <= '1';
+                    LED4 <= '0';
+                    if addra /= addrb_dw then
+                        uart_start <= '1';
+                        uart_state <= WAIT_SEND;
+                    end if;
+                elsif uart_state = WAIT_SEND then
+                    LED3 <= '0';
+                    LED4 <= '1';
+                    if uart_ready <= '0' then
+                        uart_start <= '0';
+                        uart_state <= WAIT_READY;
+                    end if;
+                elsif uart_state = WAIT_READY then
+                    LED3 <= '1';
+                    LED4 <= '1';
+                    if uart_ready = '1' then
+                        uart_state <= IDLE;
+                        addrb <= std_logic_vector(unsigned(addrb) + 1);
+                    end if;
                 end if;
             end if;
         end if;
